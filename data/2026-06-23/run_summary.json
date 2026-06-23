@@ -20,7 +20,7 @@
     "쿠팡 primary collector failed; used Naver fallback: COUPANG_VENDOR_ID is not set",
     "지마켓 primary collector failed; used Naver fallback: 403 Client Error: Forbidden for url: https://www.gmarket.co.kr/n/list?spm=gmktpc.categorylist.0.0.71246e67JJKfgW&category=200001966"
   ],
-  "generated_at": "2026-06-23T17:55:28.415414+09:00",
+  "generated_at": "2026-06-23T17:57:28.768968+09:00",
   "total_rows": 300,
   "foreign_rows": 122,
   "top5_rows": 15
