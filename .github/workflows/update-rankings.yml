@@ -1,0 +1,50 @@
+name: Update rankings
+
+on:
+  schedule:
+    # 08:00 KST is 23:00 UTC on the previous day.
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Update CSV files
+        env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          COUPANG_VENDOR_ID: ${{ vars.COUPANG_VENDOR_ID }}
+          SHOPPING_QUERY: 노트북
+          MAX_ITEMS: "100"
+        run: python scripts/update_rankings.py
+
+      - name: Commit generated CSV files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "Update rankings data"
+            git push
+          fi
+

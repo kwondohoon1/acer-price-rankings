@@ -1,0 +1,27 @@
+{
+  "date": "2026-06-23",
+  "query": "노트북",
+  "max_items_per_market": 100,
+  "markets": {
+    "쿠팡": {
+      "count": 100,
+      "method": "naver_fallback"
+    },
+    "지마켓": {
+      "count": 100,
+      "method": "naver_fallback"
+    },
+    "네이버": {
+      "count": 100,
+      "method": "primary"
+    }
+  },
+  "warnings": [
+    "쿠팡 primary collector failed; used Naver fallback: COUPANG_VENDOR_ID is not set",
+    "지마켓 primary collector failed; used Naver fallback: 403 Client Error: Forbidden for url: https://www.gmarket.co.kr/n/list?spm=gmktpc.categorylist.0.0.71246e67JJKfgW&category=200001966"
+  ],
+  "generated_at": "2026-06-23T17:55:28.415414+09:00",
+  "total_rows": 300,
+  "foreign_rows": 122,
+  "top5_rows": 15
+}
