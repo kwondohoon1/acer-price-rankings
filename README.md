@@ -7,7 +7,8 @@ under `data/`.
 
 ## Outputs
 
-- `data/rankings_latest.csv`: all collected rows, up to 100 per market.
+- `data/rankings_latest.csv`: all collected rows, up to 100 per market. Coupang's
+  official product search API returns up to 10 ranked products.
 - `data/foreign_rankings_latest.csv`: rows filtered to non-domestic laptop brands.
 - `data/top5_latest.csv`: top 5 rows per market for frontend use.
 - `data/YYYY-MM-DD/rankings.csv`: date-stamped archive.
@@ -28,21 +29,29 @@ Required:
 
 - `NAVER_CLIENT_ID`
 - `NAVER_CLIENT_SECRET`
+- `COUPANG_ACCESS_KEY`
+- `COUPANG_SECRET_KEY`
 
 Optional:
 
-- repository variable `COUPANG_VENDOR_ID`: enables Coupang's store listing API.
+- repository variable `COUPANG_SUB_ID`: a registered Coupang Partners channel ID.
 
-Without `COUPANG_VENDOR_ID`, Coupang rows are filled through the Naver Shopping
-fallback for Coupang-linked products. Gmarket direct collection can be blocked by
-Cloudflare; when that happens, Gmarket rows are filled through the Naver Shopping
-fallback for Gmarket-linked products.
+The Coupang collector uses the Partners product search API and preserves its
+reported ranks. If the API is unavailable, Coupang rows are filled through the
+Naver Shopping fallback and the fallback is recorded in `run_summary_latest.json`.
+Gmarket direct collection can be blocked by Cloudflare; when that happens,
+Gmarket rows use the same Naver Shopping fallback.
+
+Coupang Partners product URLs are affiliate links. Any public page that displays
+them must include the disclosure required by the Coupang Partners terms.
 
 ## Local Run
 
 ```bash
 pip install -r requirements.txt
-NAVER_CLIENT_ID=... NAVER_CLIENT_SECRET=... python scripts/update_rankings.py
+NAVER_CLIENT_ID=... NAVER_CLIENT_SECRET=... \
+COUPANG_ACCESS_KEY=... COUPANG_SECRET_KEY=... \
+python scripts/update_rankings.py
 ```
 
 Useful environment variables:
@@ -50,5 +59,4 @@ Useful environment variables:
 - `SHOPPING_QUERY`: default `노트북`
 - `MAX_ITEMS`: default `100`
 - `GMARKET_CATEGORY_URL`: defaults to the requested Gmarket notebook category
-- `COUPANG_VENDOR_ID`: optional Coupang store vendor id
-
+- `COUPANG_SUB_ID`: optional registered Coupang Partners channel ID

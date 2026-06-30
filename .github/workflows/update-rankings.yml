@@ -31,7 +31,9 @@ jobs:
         env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
           NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
-          COUPANG_VENDOR_ID: ${{ vars.COUPANG_VENDOR_ID }}
+          COUPANG_ACCESS_KEY: ${{ secrets.COUPANG_ACCESS_KEY }}
+          COUPANG_SECRET_KEY: ${{ secrets.COUPANG_SECRET_KEY }}
+          COUPANG_SUB_ID: ${{ vars.COUPANG_SUB_ID }}
           SHOPPING_QUERY: 노트북
           MAX_ITEMS: "100"
         run: python scripts/update_rankings.py
@@ -47,4 +49,3 @@ jobs:
             git commit -m "Update rankings data"
             git push
           fi
-

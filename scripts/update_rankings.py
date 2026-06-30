@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import csv
+import hashlib
+import hmac
 import html
 import json
 import os
 import re
 import shutil
-from dataclasses import asdict, dataclass
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import urlencode, urljoin
 from zoneinfo import ZoneInfo
 
 import requests
@@ -45,6 +47,10 @@ GMARKET_DEFAULT_URL = (
     "https://www.gmarket.co.kr/n/list?"
     "spm=gmktpc.categorylist.0.0.71246e67JJKfgW&category=200001966"
 )
+
+COUPANG_PARTNERS_BASE_URL = "https://api-gateway.coupang.com"
+COUPANG_SEARCH_PATH = "/v2/providers/affiliate_open_api/apis/openapi/v1/products/search"
+COUPANG_SEARCH_MAX_ITEMS = 10
 
 FOREIGN_BRANDS = {
     "Acer",
@@ -408,82 +414,95 @@ def collect_market_via_naver(
     return [naver_item_to_row(item, date, market, idx) for idx, item in enumerate(items, 1)]
 
 
-def collect_coupang_store(date: str, max_items: int) -> list[ProductRow]:
-    vendor_id = os.getenv("COUPANG_VENDOR_ID", "").strip()
-    if not vendor_id:
-        raise CollectorError("COUPANG_VENDOR_ID is not set")
+def coupang_authorization(
+    method: str,
+    path: str,
+    query_string: str,
+    access_key: str,
+    secret_key: str,
+    signed_at: datetime | None = None,
+) -> str:
+    timestamp = (signed_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    signed_date = timestamp.strftime("%y%m%dT%H%M%SZ")
+    message = f"{signed_date}{method.upper()}{path}{query_string}"
+    signature = hmac.new(
+        secret_key.encode("utf-8"),
+        message.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return (
+        "CEA algorithm=HmacSHA256, "
+        f"access-key={access_key}, signed-date={signed_date}, signature={signature}"
+    )
+
+
+def collect_coupang_partners(date: str, query: str, max_items: int) -> list[ProductRow]:
+    access_key = os.getenv("COUPANG_ACCESS_KEY", "").strip()
+    secret_key = os.getenv("COUPANG_SECRET_KEY", "").strip()
+    if not access_key or not secret_key:
+        raise CollectorError("COUPANG_ACCESS_KEY and COUPANG_SECRET_KEY are required")
+
+    limit = min(max_items, COUPANG_SEARCH_MAX_ITEMS)
+    query_params: list[tuple[str, str | int]] = [("keyword", query), ("limit", limit)]
+    sub_id = os.getenv("COUPANG_SUB_ID", "").strip()
+    if sub_id:
+        query_params.append(("subId", sub_id))
+    query_string = urlencode(query_params)
+    authorization = coupang_authorization(
+        "GET",
+        COUPANG_SEARCH_PATH,
+        query_string,
+        access_key,
+        secret_key,
+    )
 
     client = session()
-    client.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
+    response = client.get(
+        f"{COUPANG_PARTNERS_BASE_URL}{COUPANG_SEARCH_PATH}?{query_string}",
+        headers={
+            "Accept": "application/json",
+            "Authorization": authorization,
+            "Content-Type": "application/json;charset=UTF-8",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if str(payload.get("rCode")) != "0":
+        raise CollectorError(f"Coupang Partners search failed: {payload.get('rMessage') or 'unknown error'}")
+
+    data = payload.get("data")
+    products = data.get("productData", []) if isinstance(data, dict) else []
+    if not isinstance(products, list) or not products:
+        raise CollectorError("Coupang Partners search returned no products")
+
     rows: list[ProductRow] = []
-    page = 1
-    page_size = min(max_items, 100)
+    for index, product in enumerate(products[:limit], 1):
+        benefits = []
+        if product.get("isRocket"):
+            benefits.append("로켓배송")
+        if product.get("isFreeShipping"):
+            benefits.append("무료배송")
+        try:
+            rank = int(product.get("rank", index))
+        except (TypeError, ValueError):
+            rank = index
 
-    while len(rows) < max_items:
-        response = client.post(
-            "https://shop.coupang.com/api/v1/listing",
-            json={"vendorId": vendor_id, "page": page, "size": page_size},
-            timeout=20,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if str(payload.get("code")) not in {"200", "SUCCESS"} and payload.get("code") != 200:
-            raise CollectorError(f"Coupang listing failed: {payload.get('msg') or payload.get('message')}")
-
-        products = payload.get("data", {}).get("products", [])
-        if not products:
-            break
-
-        for product in products:
-            title = first_deep(product, ("title", "productName", "itemName"))
-            price = product.get("priceArea", {}) if isinstance(product.get("priceArea"), dict) else {}
-            image_title = product.get("imageAndTitleArea", {})
-            if isinstance(image_title, dict):
-                title = first_present(title, image_title.get("title"))
-            url = first_deep(product, ("productUrl", "url", "link", "detailUrl"))
-            if url.startswith("//"):
-                url = "https:" + url
-            elif url.startswith("/"):
-                url = urljoin("https://www.coupang.com", url)
-
-            rows.append(
-                make_row(
-                    date=date,
-                    market="쿠팡",
-                    rank=len(rows) + 1,
-                    seller=first_deep(product, ("vendorName", "sellerName", "shopName")),
-                    title=title,
-                    brand=first_deep(product, ("brand", "brandName", "maker")),
-                    list_price=first_present(price.get("originalPrice"), price.get("basePrice")),
-                    sale_price=first_present(price.get("salesPrice"), price.get("price")),
-                    benefit_price=first_present(price.get("lowestPrice"), price.get("finalPrice")),
-                    benefits=first_deep(product, ("discountDescription", "couponDescription")),
-                    url=url,
-                )
+        rows.append(
+            make_row(
+                date=date,
+                market="쿠팡",
+                rank=rank,
+                seller="쿠팡",
+                title=product.get("productName", ""),
+                sale_price=product.get("productPrice", ""),
+                benefit_price=product.get("productPrice", ""),
+                benefits=", ".join(benefits),
+                url=product.get("productUrl", ""),
             )
-            if len(rows) >= max_items:
-                break
-
-        page += 1
+        )
 
     return rows
-
-
-def first_deep(payload: Any, keys: tuple[str, ...]) -> str:
-    if isinstance(payload, dict):
-        for key in keys:
-            if key in payload and clean_text(payload[key]):
-                return clean_text(payload[key])
-        for value in payload.values():
-            found = first_deep(value, keys)
-            if found:
-                return found
-    elif isinstance(payload, list):
-        for value in payload:
-            found = first_deep(value, keys)
-            if found:
-                return found
-    return ""
 
 
 def collect_gmarket_direct(date: str, max_items: int) -> list[ProductRow]:
@@ -561,26 +580,31 @@ def collect_with_fallbacks(
     }
     all_rows: list[ProductRow] = []
 
-    collectors: list[tuple[str, Callable[[], list[ProductRow]], Callable[[], list[ProductRow]] | None]] = [
+    collectors: list[
+        tuple[str, str, Callable[[], list[ProductRow]], Callable[[], list[ProductRow]] | None]
+    ] = [
         (
             "쿠팡",
-            lambda: collect_coupang_store(date, max_items),
+            "coupang_partners_search",
+            lambda: collect_coupang_partners(date, query, max_items),
             lambda: collect_market_via_naver(date, "쿠팡", query, max_items, client_id, client_secret),
         ),
         (
             "지마켓",
+            "gmarket_direct",
             lambda: collect_gmarket_direct(date, max_items),
             lambda: collect_market_via_naver(date, "지마켓", query, max_items, client_id, client_secret),
         ),
         (
             "네이버",
+            "naver_api",
             lambda: collect_naver(date, query, max_items, client_id, client_secret),
             None,
         ),
     ]
 
-    for market, primary, fallback in collectors:
-        method = "primary"
+    for market, primary_method, primary, fallback in collectors:
+        method = primary_method
         try:
             rows = primary()
         except Exception as exc:
@@ -592,8 +616,6 @@ def collect_with_fallbacks(
             summary["warnings"].append(f"{market} primary collector failed; used Naver fallback: {exc}")
             rows = fallback()
 
-        for idx, row in enumerate(rows[:max_items], 1):
-            row.rank = idx
         summary["markets"][market] = {"count": len(rows[:max_items]), "method": method}
         all_rows.extend(rows[:max_items])
 
